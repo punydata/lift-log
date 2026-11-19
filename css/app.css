@@ -172,3 +172,6 @@ html, body { max-width: 100%; overflow-x: hidden; }
 input, select, textarea, button { min-width: 0; max-width: 100%; }
 input[type=date], input[type=time] { -webkit-appearance: none; appearance: none; display: block; min-height: 42px; text-align: left; }
 main, .card, .set, .set-main, .set-meta, .sub-rows, .sub-row { min-width: 0; }
+
+.update-banner { position: fixed; left: 12px; right: 12px; bottom: calc(env(safe-area-inset-bottom) + 12px); z-index: 60; width: auto;
+  background: var(--accent); color: var(--accent-ink); border: 0; font-weight: 600; padding: 14px; border-radius: 14px; }

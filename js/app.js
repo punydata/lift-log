@@ -6,7 +6,7 @@ import * as db from './db.js';
 // ============================================================
 const S = { ex: new Map(), wo: new Map() };
 const app = document.getElementById('app');
-const APP_VERSION = 'v0.5.2';
+const APP_VERSION = 'v0.5.3';
 const SET_TYPES = ['Warmup', 'Drop Set', 'Superset', 'Myo-rep Match'];
 
 // Which optional fields are shown. Saved on the phone; turning one off only hides it.
@@ -949,6 +949,16 @@ document.addEventListener('keydown', (e) => {
 // ============================================================
 // Start up
 // ============================================================
+function showUpdateBanner() {
+  if (document.getElementById('update-banner')) return;
+  const el = document.createElement('button');
+  el.id = 'update-banner';
+  el.className = 'update-banner';
+  el.textContent = 'Lift Log was updated · Tap to refresh';
+  el.addEventListener('click', () => location.reload());
+  document.body.appendChild(el);
+}
+
 async function boot() {
   const [exs, wos, st, mt] = await Promise.all([db.getAll('exercises'), db.getAll('workouts'), db.get('meta', 'settings'), db.get('meta', 'meta')]);
   if (st) SETTINGS = { ...DEFAULT_SETTINGS, ...st.value };
@@ -958,7 +968,14 @@ async function boot() {
   route();
   db.requestPersistence();
   try { indexedDB.deleteDatabase('liftlog-test'); localStorage.removeItem('liftlog-test-checks'); } catch (e) { /* ignore */ }
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+  if ('serviceWorker' in navigator) {
+    const hadController = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then((reg) => {
+      // check for a new version whenever the app comes back to the screen
+      document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') reg.update().catch(() => {}); });
+    }).catch(() => {});
+    navigator.serviceWorker.addEventListener('controllerchange', () => { if (hadController) showUpdateBanner(); });
+  }
 }
 boot().catch((err) => { app.innerHTML = `<div class="empty">Something went wrong loading your data: ${esc(err.message)}</div>`; });
 

@@ -1,6 +1,6 @@
 // Offline support: keeps a copy of the app's files on the phone.
 // Bump VERSION whenever app files change so phones pick up the update.
-const VERSION = 'v0.5.2';
+const VERSION = 'v0.5.3';
 const FILES = [
   './',
   './index.html',
@@ -29,7 +29,8 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
   event.respondWith(
-    fetch(event.request)
+    // 'no-cache' = always ask the server if there's a newer file (cheap check), so updates arrive right away
+    fetch(event.request, { cache: 'no-cache' })
       .then((res) => {
         const copy = res.clone();
         caches.open(VERSION).then((c) => c.put(event.request, copy));
