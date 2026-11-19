@@ -2,6 +2,6 @@
 
 A personal workout tracker for iPhone, installed as a home-screen web app. All workout data stays on the phone; this repository only hosts the app's code.
 
-**Current status:** setup test (`test-v1`), checking that full-screen mode, offline use, on-phone storage and CSV import/export work on iPhone before the real build.
+**Current status:** Phase 3 (core logging: exercise library, workouts, sets, special set types, ROM/RPE, notes, last-3 history). Settings, export and the progress dashboard come next.
 
 Install: open https://punydata.github.io/lift-log/ in Safari → Share → Add to Home Screen.
