@@ -6,7 +6,7 @@ import * as db from './db.js';
 // ============================================================
 const S = { ex: new Map(), wo: new Map() };
 const app = document.getElementById('app');
-const APP_VERSION = 'v0.4.0';
+const APP_VERSION = 'v0.5.0';
 const SET_TYPES = ['Warmup', 'Drop Set', 'Superset', 'Myo-rep Match'];
 
 // Which optional fields are shown. Saved on the phone; turning one off only hides it.
@@ -20,7 +20,7 @@ const SETTING_LABELS = [
   ['history', 'Last 3 sessions panel', 'Your recent sets for the exercise you are logging']
 ];
 let SETTINGS = { ...DEFAULT_SETTINGS };
-let META = { lastBackup: null };
+let META = { lastBackup: null, progressKey: null, chartMode: 'heaviest' };
 async function saveSettings() { await db.put('meta', { key: 'settings', value: SETTINGS }); }
 async function saveMeta() { await db.put('meta', { key: 'meta', value: META }); }
 
@@ -109,12 +109,13 @@ function route() {
   if (view === 'workout' && S.wo.has(id)) return renderWorkout(id);
   if (view === 'library') return renderLibrary();
   if (view === 'exercise' && S.ex.has(id)) return renderExerciseEdit(id);
-  if (view === 'progress') return renderPlaceholder('Progress', 'The progress dashboard arrives in Phase 5.');
+  if (view === 'progress') return renderProgress();
   if (view === 'settings') return renderSettings();
   return renderHome();
 }
 const go = (hash) => { if (location.hash === hash) route(); else location.hash = hash; };
 window.addEventListener('hashchange', route);
+let rzT; window.addEventListener('resize', () => { clearTimeout(rzT); rzT = setTimeout(() => { if (location.hash.startsWith('#/progress')) renderProgress(); }, 150); });
 
 function topbar(title, backHash, backLabel = 'Back', right = '') {
   return `<header class="topbar"><div class="side">${backHash ? `<button class="ghost" data-nav="${backHash}">‹ ${esc(backLabel)}</button>` : ''}</div>
@@ -674,6 +675,143 @@ function onExerciseInput(el) {
 }
 
 
+
+// ============================================================
+// Progress dashboard
+// ============================================================
+const comboKey = (exerciseId, variantId) => `${exerciseId}|${variantId || ''}`;
+const e1rm = (s) => s.weight * (1 + s.reps / 30);
+const usable = (s) => !isWarmup(s) && s.weight !== null && s.reps !== null;
+
+function progressCombos() {
+  const seen = new Map();
+  for (const w of sortedWorkouts()) {
+    for (const e of w.entries) {
+      if (!e.sets.some(usable)) continue;
+      const k = comboKey(e.exerciseId, e.variantId);
+      if (seen.has(k)) continue;
+      const ex = S.ex.get(e.exerciseId);
+      const v = ex && e.variantId ? ex.variants.find((x) => x.id === e.variantId) : null;
+      seen.set(k, { key: k, label: (ex ? ex.name : '(deleted)') + (v ? ' · ' + v.name : '') });
+    }
+  }
+  return [...seen.values()];
+}
+
+// One point per workout. Only working sets, only base reps.
+function progressPoints(key, mode) {
+  const pts = [];
+  const workouts = [...S.wo.values()].sort((a, b) => a.date.localeCompare(b.date));
+  for (const w of workouts) {
+    const sets = w.entries.filter((e) => comboKey(e.exerciseId, e.variantId) === key).flatMap((e) => e.sets).filter(usable);
+    if (!sets.length) continue;
+    const heaviest = sets.reduce((best, s) => (!best || s.weight > best.weight || (s.weight === best.weight && s.reps > best.reps) ? s : best), null);
+    let pick = heaviest;
+    if (mode === 'e1rm' && heaviest.weight > 0) {
+      pick = sets.filter((s) => s.weight > 0).reduce((best, s) => (!best || e1rm(s) > e1rm(best) ? s : best), null);
+    }
+    pts.push({ date: w.date, weight: pick.weight, reps: pick.reps });
+  }
+  return pts;
+}
+
+function repPRs(key) {
+  const best = new Map();
+  const workouts = [...S.wo.values()].sort((a, b) => a.date.localeCompare(b.date));
+  for (const w of workouts) {
+    for (const e of w.entries) {
+      if (comboKey(e.exerciseId, e.variantId) !== key) continue;
+      for (const s of e.sets.filter(usable)) {
+        if (s.reps < 1) continue;
+        const cur = best.get(s.reps);
+        if (!cur || s.weight > cur.weight) best.set(s.reps, { reps: s.reps, weight: s.weight, date: w.date });
+      }
+    }
+  }
+  return [...best.values()].sort((a, b) => a.reps - b.reps);
+}
+
+function niceStep(range, targetTicks) {
+  const raw = range / Math.max(1, targetTicks);
+  const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  const n = raw / mag;
+  return (n <= 1 ? 1 : n <= 2 ? 2 : n <= 2.5 ? 2.5 : n <= 5 ? 5 : 10) * mag;
+}
+
+function renderProgress() {
+  const combos = progressCombos();
+  if (!combos.length) {
+    app.innerHTML = topbar('Progress', '#/', 'Home') + `<main><div class="empty">Log some working sets and your progress charts will show up here.</div></main>`;
+    return;
+  }
+  if (!combos.some((c) => c.key === META.progressKey)) META.progressKey = combos[0].key;
+  const mode = META.chartMode === 'e1rm' ? 'e1rm' : 'heaviest';
+  const sorted = [...combos].sort((a, b) => a.label.localeCompare(b.label));
+  const prs = repPRs(META.progressKey);
+  app.innerHTML = topbar('Progress', '#/', 'Home') + `<main>
+    <select id="prog-ex" class="prog-select" aria-label="Exercise">${sorted.map((c) => `<option value="${esc(c.key)}"${c.key === META.progressKey ? ' selected' : ''}>${esc(c.label)}</option>`).join('')}</select>
+    <div class="seg" role="group" aria-label="Which set represents each workout">
+      <button data-act="mode" data-mode="heaviest" class="${mode === 'heaviest' ? 'on' : ''}">Heaviest set</button>
+      <button data-act="mode" data-mode="e1rm" class="${mode === 'e1rm' ? 'on' : ''}">Best est. max</button>
+    </div>
+    <div class="card chart-card">
+      <div class="chart-legend"><span><i class="lg-line"></i>Weight (lb)</span><span><i class="lg-bar"></i>Reps</span></div>
+      <div class="chart" id="chart"></div>
+    </div>
+    <div class="section-label">Rep PRs</div>
+    <div class="card" style="padding:4px 12px">
+      <table class="pr-table"><thead><tr><th>Reps</th><th>Best weight</th><th>Date</th></tr></thead>
+      <tbody>${prs.map((r) => `<tr><td>${r.reps}</td><td>${fmtNum(r.weight)} lb</td><td>${esc(new Date(r.date).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }))}</td></tr>`).join('')}</tbody></table>
+    </div>
+    <p class="faint small" style="text-align:center">Working sets only · base reps only (drops and myo-rep mini-sets don't count)</p>
+  </main>`;
+  drawChart(progressPoints(META.progressKey, mode));
+}
+
+function drawChart(pts) {
+  const box = document.getElementById('chart');
+  const H = 260, top = 8, bottom = 30, AX_L = 46, AX_R = 30, SP = 58;
+  const plotH = H - top - bottom;
+  const avail = box.clientWidth - AX_L - AX_R;
+  const W = Math.max(avail, pts.length * SP);
+  const xs = pts.map((_, i) => (pts.length === 1 ? W / 2 : SP / 2 + i * ((W - SP) / (pts.length - 1))));
+  // weight sits in the upper part of the chart, reps bars in the lower third
+  const ws = pts.map((p) => p.weight);
+  let lo = Math.min(...ws), hi = Math.max(...ws);
+  if (hi - lo < 1e-9) { const pad = Math.max(5, Math.abs(hi) * 0.1); lo -= pad; hi += pad; }
+  const bandTop = 0.12, bandBot = 0.58;
+  const span = (hi - lo) / (bandBot - bandTop);
+  const dHi = hi + span * bandTop, dLo = dHi - span;
+  const yW = (v) => top + (dHi - v) / (dHi - dLo) * plotH;
+  const maxReps = Math.max(...pts.map((p) => p.reps), 1);
+  const rTop = maxReps / 0.33;
+  const yR = (v) => top + plotH - (v / rTop) * plotH;
+  const step = niceStep(dHi - dLo, 4);
+  const ticks = [];
+  for (let t = Math.ceil(dLo / step) * step; t <= dHi + 1e-9; t += step) ticks.push(Math.round(t * 100) / 100);
+  const rStep = niceStep(rTop, 3);
+  const rTicks = [];
+  for (let t = 0; t <= rTop + 1e-9; t += rStep) rTicks.push(Math.round(t * 10) / 10);
+  const grid = ticks.map((t) => `<line class="c-grid" x1="0" x2="${W}" y1="${yW(t)}" y2="${yW(t)}"/>`).join('');
+  const bw = Math.min(26, SP * 0.45);
+  const bars = pts.map((p, i) => { const y = yR(p.reps), h = top + plotH - y; return `<path class="c-bar" d="M${xs[i] - bw / 2},${top + plotH} V${y + 4} q0,-4 4,-4 H${xs[i] + bw / 2 - 4} q4,0 4,4 V${top + plotH} Z"/>
+    <text class="c-rep" x="${xs[i]}" y="${top + plotH - 6}">${p.reps}</text>`; }).join('');
+  const line = pts.length > 1 ? `<polyline class="c-line" points="${pts.map((p, i) => `${xs[i]},${yW(p.weight)}`).join(' ')}"/>` : '';
+  const dots = pts.map((p, i) => `<circle class="c-dot" cx="${xs[i]}" cy="${yW(p.weight)}" r="4.5"/><text class="c-wlabel" x="${xs[i]}" y="${yW(p.weight) - 10}">${fmtNum(p.weight)}</text>`).join('');
+  const dates = pts.map((p, i) => `<text class="c-date" x="${xs[i]}" y="${H - 10}">${esc(shortDate(p.date))}</text>`).join('');
+  const left = `<svg width="${AX_L}" height="${H}" class="c-axis">${ticks.map((t) => `<text x="${AX_L - 6}" y="${yW(t) + 4}" text-anchor="end">${fmtNum(t)}</text>`).join('')}<text x="4" y="${top + 2}" class="c-unit" text-anchor="start" dominant-baseline="hanging">lb</text></svg>`;
+  const right = `<svg width="${AX_R}" height="${H}" class="c-axis">${rTicks.map((t) => `<text x="6" y="${yR(t) + 4}">${fmtNum(t)}</text>`).join('')}</svg>`;
+  box.innerHTML = `${left}<div class="c-scroll" id="c-scroll"><svg width="${W}" height="${H}" role="img" aria-label="Weight and reps per workout">
+    <line class="c-base" x1="0" x2="${W}" y1="${top + plotH}" y2="${top + plotH}"/>${grid}${bars}${line}${dots}${dates}</svg></div>${right}`;
+  const sc = document.getElementById('c-scroll');
+  sc.scrollLeft = sc.scrollWidth; // newest on screen
+  if (W > avail + 1) box.insertAdjacentHTML('afterend', `<div class="faint small" style="text-align:center;padding:2px 0 6px">‹ swipe the chart for older workouts · ${pts.length} total</div>`);
+}
+
+async function onProgressAction(act, el) {
+  if (act === 'mode') { META.chartMode = el.dataset.mode; await saveMeta(); renderProgress(); }
+}
+
 // ============================================================
 // Settings + CSV export
 // ============================================================
@@ -775,6 +913,7 @@ app.addEventListener('click', (e) => {
   if (act === 'start-workout') return startWorkout();
   if (act === 'lib-add') return libraryAdd();
   if (act === 'export') return exportCSV();
+  if (location.hash.startsWith('#/progress')) return onProgressAction(act, a);
   if (location.hash.startsWith('#/exercise/')) return onExerciseAction(act, a);
   if (location.hash.startsWith('#/workout/')) return onWorkoutAction(act, a);
 });
@@ -786,6 +925,7 @@ function onAnyInput(e) {
 }
 app.addEventListener('input', onAnyInput);
 app.addEventListener('change', async (e) => {
+  if (e.target.id === 'prog-ex') { META.progressKey = e.target.value; await saveMeta(); renderProgress(); return; }
   const k = e.target.dataset.setting;
   if (k) { SETTINGS[k] = e.target.checked; await saveSettings(); return; }
   if (e.target.tagName === 'SELECT' || e.target.type === 'date') onAnyInput(e);
@@ -822,4 +962,4 @@ async function boot() {
 boot().catch((err) => { app.innerHTML = `<div class="empty">Something went wrong loading your data: ${esc(err.message)}</div>`; });
 
 // for automated testing
-window.__liftlog = { S, get SETTINGS() { return SETTINGS; }, toCSV };
+window.__liftlog = { S, get SETTINGS() { return SETTINGS; }, toCSV, progressPoints, repPRs };

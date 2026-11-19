@@ -1,6 +1,6 @@
 // Offline support: keeps a copy of the app's files on the phone.
 // Bump VERSION whenever app files change so phones pick up the update.
-const VERSION = 'v0.4.0';
+const VERSION = 'v0.5.0';
 const FILES = [
   './',
   './index.html',
