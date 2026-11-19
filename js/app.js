@@ -6,7 +6,23 @@ import * as db from './db.js';
 // ============================================================
 const S = { ex: new Map(), wo: new Map() };
 const app = document.getElementById('app');
+const APP_VERSION = 'v0.4.0';
 const SET_TYPES = ['Warmup', 'Drop Set', 'Superset', 'Myo-rep Match'];
+
+// Which optional fields are shown. Saved on the phone; turning one off only hides it.
+const DEFAULT_SETTINGS = { variant: true, setTypes: true, rom: true, rpe: true, notes: true, history: true };
+const SETTING_LABELS = [
+  ['variant', 'Exercise variants', 'Barbell, Dumbbell, Cable… Off: the variant step is skipped when adding exercises.'],
+  ['setTypes', 'Set types', 'Warmup, Drop Set, Superset, Myo-rep Match'],
+  ['rom', 'ROM (range of motion)', '1–5 scale on each set'],
+  ['rpe', 'RPE (effort)', '1–10 scale on each set'],
+  ['notes', 'Notes', 'Free-text notes on each exercise'],
+  ['history', 'Last 3 sessions panel', 'Your recent sets for the exercise you are logging']
+];
+let SETTINGS = { ...DEFAULT_SETTINGS };
+let META = { lastBackup: null };
+async function saveSettings() { await db.put('meta', { key: 'settings', value: SETTINGS }); }
+async function saveMeta() { await db.put('meta', { key: 'meta', value: META }); }
 
 const ROM_SCALE = [
   [1, 'Partial', 'Quarter reps or top-end only'],
@@ -38,7 +54,7 @@ const activeVariants = (ex) => (ex ? ex.variants.filter((v) => !v.archived) : []
 function exLabel(entry) {
   const ex = S.ex.get(entry.exerciseId);
   const v = ex && entry.variantId ? ex.variants.find((x) => x.id === entry.variantId) : null;
-  return { name: ex ? ex.name : '(deleted exercise)', variant: v ? v.name : '' };
+  return { name: ex ? ex.name : '(deleted exercise)', variant: v && SETTINGS.variant ? v.name : '' };
 }
 const isWarmup = (set) => set.types.includes('Warmup');
 const isBlank = (set) => set.weight === null && set.reps === null;
@@ -94,7 +110,7 @@ function route() {
   if (view === 'library') return renderLibrary();
   if (view === 'exercise' && S.ex.has(id)) return renderExerciseEdit(id);
   if (view === 'progress') return renderPlaceholder('Progress', 'The progress dashboard arrives in Phase 5.');
-  if (view === 'settings') return renderPlaceholder('Settings', 'Field toggles and CSV export arrive in Phase 4.');
+  if (view === 'settings') return renderSettings();
   return renderHome();
 }
 const go = (hash) => { if (location.hash === hash) route(); else location.hash = hash; };
@@ -112,12 +128,13 @@ function renderHome() {
   const cur = inProgress();
   app.innerHTML = `
     <div class="home-title"><h1>Lift Log</h1><p>${esc(new Date().toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' }))}</p></div>
+    ${needsBackup() ? `<button class="backup-nudge" data-nav="#/settings">${esc(backupText())} · <u>Back up now</u></button>` : ''}
     ${cur ? `<button class="banner" data-nav="#/workout/${cur.id}">Continue workout<small>${esc(cur.name || 'Workout')} · ${cur.entries.length} exercise${cur.entries.length === 1 ? '' : 's'}</small></button>` : ''}
     <nav class="home-grid">
       <button class="tile" data-nav="#/progress"><span class="glyph">↗</span>Progress<small>Charts &amp; PRs</small></button>
       <button class="tile" data-nav="#/workouts"><span class="glyph">●</span>Workouts<small>${S.wo.size} logged</small></button>
       <button class="tile" data-nav="#/library"><span class="glyph">≡</span>Exercise Library<small>${[...S.ex.values()].filter((e) => !e.archived).length} exercises</small></button>
-      <button class="tile" data-nav="#/settings"><span class="glyph">⚙</span>Settings<small>Fields &amp; data</small></button>
+      <button class="tile" data-nav="#/settings"><span class="glyph">⚙</span>Settings<small>Fields &amp; backup</small></button>
     </nav>`;
 }
 
@@ -197,11 +214,11 @@ function entryCard(w, e, idx) {
   return `<section class="card entry" data-entry="${e.id}">
     <div class="entry-head"><h2>${esc(name)}${variant ? ` <span class="variant">· ${esc(variant)}</span>` : ''}</h2>
       <button data-act="entry-menu" aria-label="Exercise options">⋯</button></div>
-    ${historyPanel(w, e)}
-    <div class="legend"><button data-act="scale" data-kind="rom">ROM ⓘ</button><button data-act="scale" data-kind="rpe">RPE ⓘ</button></div>
+    ${SETTINGS.history ? historyPanel(w, e) : ''}
+    ${SETTINGS.rom || SETTINGS.rpe ? `<div class="legend">${SETTINGS.rom ? '<button data-act="scale" data-kind="rom">ROM ⓘ</button>' : ''}${SETTINGS.rpe ? '<button data-act="scale" data-kind="rpe">RPE ⓘ</button>' : ''}</div>` : ''}
     ${sets || '<div class="faint small" style="padding:6px 0">No sets yet.</div>'}
     <button class="block add-set" data-act="add-set">+ Add set</button>
-    <textarea class="note" data-field="note" rows="1" placeholder="Notes">${esc(e.note)}</textarea>
+    ${SETTINGS.notes ? `<textarea class="note" data-field="note" rows="1" placeholder="Notes">${esc(e.note)}</textarea>` : ''}
   </section>`;
 }
 
@@ -213,8 +230,16 @@ function opts(max, val, start = 1) {
 
 function setRow(e, s, label) {
   const types = s.types.length ? s.types.map((t) => `<span class="chip">${esc(t)}</span>`).join('') : 'Set type ▾';
+  const metaParts = [];
+  const cols = [];
+  if (SETTINGS.setTypes) { metaParts.push(`<button class="type-btn${s.types.length ? '' : ' none'}" data-act="types">${types}</button>`); cols.push('minmax(0, 1fr)'); }
+  else cols.push('minmax(0, 1fr)');
+  if (SETTINGS.rom) { metaParts.push(`<label>ROM<select data-field="rom" aria-label="ROM">${opts(5, s.rom)}</select></label>`); cols.push('76px'); }
+  if (SETTINGS.rpe) { metaParts.push(`<label>RPE<select data-field="rpe" aria-label="RPE">${opts(10, s.rpe)}</select></label>`); cols.push('76px'); }
+  if (!SETTINGS.setTypes && metaParts.length) metaParts.unshift('<span></span>');
+  const meta = metaParts.length ? `<div class="set-meta" style="grid-template-columns:${cols.join(' ')}">${metaParts.join('')}</div>` : '';
   let sub = '';
-  if (s.types.includes('Drop Set')) {
+  if (SETTINGS.setTypes && s.types.includes('Drop Set')) {
     sub += `<div class="sub-rows">${s.drops.map((d, i) => `<div class="sub-row" data-drop="${i}">
         <span class="lbl">Drop ${i + 1}</span>
         <button class="pm" data-act="flip" aria-label="Plus or minus">±</button>
@@ -224,7 +249,7 @@ function setRow(e, s, label) {
         <button class="rm" data-act="rm-drop" aria-label="Remove drop">✕</button></div>`).join('')}
       <button class="sub-add" data-act="add-drop">+ Add drop</button></div>`;
   }
-  if (s.types.includes('Myo-rep Match')) {
+  if (SETTINGS.setTypes && s.types.includes('Myo-rep Match')) {
     sub += `<div class="sub-rows"><div class="myo-line">Target <input data-field="myo-target" inputmode="numeric" pattern="[0-9]*" value="${fmtNum(s.myo.target)}" placeholder="–" autocomplete="off">
         <span class="myo-total" data-myo-total>${esc(myoSummary(s))}</span></div>
       <div class="minis">${s.myo.minis.map((m, i) => `<span class="mini" data-mini="${i}">+<input data-field="mini-reps" inputmode="numeric" pattern="[0-9]*" value="${fmtNum(m)}" placeholder="reps" autocomplete="off"><button class="rm" data-act="rm-mini" aria-label="Remove mini-set">✕</button></span>`).join('')}
@@ -239,11 +264,7 @@ function setRow(e, s, label) {
       <input class="num" data-field="reps" inputmode="numeric" pattern="[0-9]*" value="${fmtNum(s.reps)}" placeholder="reps" autocomplete="off">
       <button class="more" data-act="set-menu" aria-label="Set options">⋯</button>
     </div>
-    <div class="set-meta">
-      <button class="type-btn${s.types.length ? '' : ' none'}" data-act="types">${types}</button>
-      <label>ROM<select data-field="rom" aria-label="ROM">${opts(5, s.rom)}</select></label>
-      <label>RPE<select data-field="rpe" aria-label="RPE">${opts(10, s.rpe)}</select></label>
-    </div>${sub}
+    ${meta}${sub}
   </div>`;
 }
 
@@ -264,10 +285,11 @@ function updateMyoTotal(setEl, s) {
 
 // "Last 3 sessions" for this exercise + variant (working sets only, plus notes)
 function formatSet(s) {
-  let t = `${fmtNum(s.weight) || '–'}×${fmtNum(s.reps) || '–'}`;
-  if (s.types.includes('Drop Set')) s.drops.forEach((d) => { if (d.weight !== null || d.reps !== null) t += ` → ${fmtNum(d.weight) || '–'}×${fmtNum(d.reps) || '–'}`; });
-  if (s.types.includes('Myo-rep Match')) { const m = s.myo.minis.filter((x) => x !== null); if (m.length) t += ' +' + m.join('+'); }
-  if (s.rpe) t += ` @${s.rpe}`;
+  const wr = (w, r) => `${w === null ? '–' : fmtNum(w) + ' lb'} × ${r === null ? '–' : fmtNum(r)}`;
+  let t = wr(s.weight, s.reps);
+  if (SETTINGS.setTypes && s.types.includes('Drop Set')) s.drops.forEach((d) => { if (d.weight !== null || d.reps !== null) t += ` → ${wr(d.weight, d.reps)}`; });
+  if (SETTINGS.setTypes && s.types.includes('Myo-rep Match')) { const m = s.myo.minis.filter((x) => x !== null); if (m.length) t += ' +' + m.join('+'); }
+  if (SETTINGS.rpe && s.rpe) t += ` @${s.rpe}`;
   return t;
 }
 function historyFor(exerciseId, variantId, excludeId, beforeIso, limit = 3) {
@@ -277,7 +299,7 @@ function historyFor(exerciseId, variantId, excludeId, beforeIso, limit = 3) {
     const entries = w.entries.filter((e) => e.exerciseId === exerciseId && (e.variantId || null) === (variantId || null));
     if (!entries.length) continue;
     const sets = entries.flatMap((e) => e.sets).filter((s) => !isWarmup(s) && !isBlank(s));
-    const notes = entries.map((e) => e.note).filter(Boolean);
+    const notes = SETTINGS.notes ? entries.map((e) => e.note).filter(Boolean) : [];
     if (!sets.length && !notes.length) continue;
     out.push({ date: w.date, sets, notes });
     if (out.length >= limit) break;
@@ -474,7 +496,7 @@ function drawPickList(sheet) {
   const all = [...S.ex.values()].filter((x) => !x.archived);
   const match = all.filter((x) => !ql || x.name.toLowerCase().includes(ql));
   const btn = (x) => {
-    const vs = activeVariants(x);
+    const vs = SETTINGS.variant ? activeVariants(x) : [];
     return `<button data-pick="${x.id}"><b>${esc(x.name)}</b>${vs.length ? `<br><span class="muted small">${esc(vs.map((v) => v.name).join(' · '))}</span>` : ''}</button>`;
   };
   let html = '';
@@ -500,11 +522,13 @@ async function onPickClick(e, sheet) {
     if (!name) return;
     const ex = { id: db.uid(), name, variants: [], archived: false, createdAt: new Date().toISOString(), lastUsed: null };
     S.ex.set(ex.id, ex); await saveExercise(ex);
+    if (!SETTINGS.variant) return addEntry(ex, null);
     return drawVariantStep(sheet, ex, true);
   }
   if (pick) {
     const ex = S.ex.get(pick.dataset.pick);
     const vs = activeVariants(ex);
+    if (!SETTINGS.variant) return addEntry(ex, null);
     if (vs.length <= 1) return addEntry(ex, vs[0] ? vs[0].id : null);
     return drawVariantStep(sheet, ex, false);
   }
@@ -565,7 +589,7 @@ function renderLibrary() {
   const item = (x) => {
     const vs = activeVariants(x);
     return `<button class="list-item" data-nav="#/exercise/${x.id}"><div class="grow"><div class="title">${esc(x.name)}</div>
-      <div class="sub">${vs.length ? esc(vs.map((v) => v.name).join(' · ')) : 'No variants'}</div></div><span class="chev">›</span></button>`;
+      ${SETTINGS.variant ? `<div class="sub">${vs.length ? esc(vs.map((v) => v.name).join(' · ')) : 'No variants'}</div>` : ''}</div><span class="chev">›</span></button>`;
   };
   app.innerHTML = topbar('Exercise Library', '#/', 'Home') + `<main>
     <div class="row" style="margin-bottom:12px"><input id="new-ex" class="grow" placeholder="New exercise name" autocomplete="off" autocapitalize="words"><button class="primary" data-act="lib-add">Add</button></div>
@@ -594,14 +618,15 @@ function renderExerciseEdit(id) {
     <button data-act="${v.archived ? 'var-restore' : 'var-remove'}">${v.archived ? 'Restore' : (usage(ex.id, v.id) ? 'Archive' : 'Delete')}</button></div>`;
   const live = ex.variants.filter((v) => !v.archived);
   const arch = ex.variants.filter((v) => v.archived);
-  app.innerHTML = topbar(ex.name, '#/library', 'Library') + `<main>
-    <div class="card"><label class="muted small">Exercise name</label><input data-exfield="name" value="${esc(ex.name)}" autocomplete="off" autocapitalize="words" style="margin-top:4px">
-      <div class="faint small" style="margin-top:6px">Logged in ${uses} workout${uses === 1 ? '' : 's'}</div></div>
-    <div class="card"><div style="font-weight:600;margin-bottom:8px">Variants</div>
+  const variantsCard = !SETTINGS.variant ? '' : `<div class="card"><div style="font-weight:600;margin-bottom:8px">Variants</div>
       ${live.map(vrow).join('') || '<div class="faint small" style="margin-bottom:8px">No variants yet.</div>'}
       <div class="row"><input id="new-var" class="grow" placeholder="Add variant (e.g. Barbell)" autocomplete="off" autocapitalize="words"><button data-act="var-add">Add</button></div>
       ${arch.length ? `<div class="section-label">Archived variants</div>${arch.map(vrow).join('')}` : ''}
-    </div>
+    </div>`;
+  app.innerHTML = topbar(ex.name, '#/library', 'Library') + `<main>
+    <div class="card"><label class="muted small">Exercise name</label><input data-exfield="name" value="${esc(ex.name)}" autocomplete="off" autocapitalize="words" style="margin-top:4px">
+      <div class="faint small" style="margin-top:6px">Logged in ${uses} workout${uses === 1 ? '' : 's'}</div></div>
+    ${variantsCard}
     ${ex.archived ? '<button class="block" data-act="ex-restore">Restore exercise</button>'
       : `<button class="ghost danger block" data-act="ex-remove">${uses ? 'Archive exercise' : 'Delete exercise'}</button>
          ${uses ? '<p class="faint small" style="text-align:center">Archiving hides it from the picker but keeps all its history.</p>' : ''}`}
@@ -648,6 +673,96 @@ function onExerciseInput(el) {
   saveExercise(ex);
 }
 
+
+// ============================================================
+// Settings + CSV export
+// ============================================================
+function daysSince(iso) { return iso ? Math.floor((Date.now() - new Date(iso).getTime()) / 86400000) : null; }
+function backupText() {
+  const d = daysSince(META.lastBackup);
+  if (d === null) return 'Never backed up';
+  if (d === 0) return 'Backed up today';
+  return `Last backup ${d} day${d === 1 ? '' : 's'} ago`;
+}
+const needsBackup = () => S.wo.size > 0 && (META.lastBackup === null || daysSince(META.lastBackup) >= 14);
+
+function renderSettings() {
+  app.innerHTML = topbar('Settings', '#/', 'Home') + `<main>
+    <div class="section-label">Fields to show</div>
+    <div class="card">
+      ${SETTING_LABELS.map(([k, label, hint]) => `<label class="toggle-row"><span class="grow"><span class="t-label">${esc(label)}</span><span class="t-hint">${esc(hint)}</span></span>
+        <input type="checkbox" class="switch" data-setting="${k}"${SETTINGS[k] ? ' checked' : ''}></label>`).join('')}
+      <p class="faint small" style="margin:10px 0 0">Exercise, weight and reps are always shown. Turning a field off only hides it; anything already logged is kept.</p>
+    </div>
+    <div class="section-label">Data</div>
+    <div class="card">
+      <div class="row" style="justify-content:space-between;margin-bottom:10px"><span>${S.wo.size} workout${S.wo.size === 1 ? '' : 's'} on this phone</span>
+        <span class="small ${needsBackup() ? 'warn' : 'muted'}">${esc(backupText())}</span></div>
+      <button class="primary block" data-act="export">Export CSV backup</button>
+      <p class="faint small" style="margin:10px 0 0">Choose “Save to Files” to keep a copy. The file opens in Numbers, Excel or Google Sheets. Your data only lives on this phone, so a backup every couple of weeks is a good habit.</p>
+      <div id="export-msg" class="small muted" style="margin-top:8px"></div>
+    </div>
+    <p class="faint small" style="text-align:center;margin-top:24px">Lift Log ${esc(APP_VERSION)}</p>
+  </main>`;
+}
+
+const CSV_COLS = ['workout_id', 'workout_date', 'workout_name', 'exercise', 'variant', 'set_number', 'segment_number', 'segment_kind',
+  'weight', 'reps', 'set_types', 'myo_target', 'rom', 'rpe', 'exercise_note'];
+
+function csvDate(iso) {
+  const d = new Date(iso);
+  return `${localDateValue(iso)} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
+function toCSV() {
+  const q = (v) => { const t = v === null || v === undefined ? '' : String(v); return /[",\r\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t; };
+  const lines = [CSV_COLS.join(',')];
+  const workouts = [...S.wo.values()].sort((a, b) => a.date.localeCompare(b.date));
+  for (const w of workouts) {
+    for (const e of w.entries) {
+      const ex = S.ex.get(e.exerciseId);
+      const v = ex && e.variantId ? ex.variants.find((x) => x.id === e.variantId) : null;
+      const base = { workout_id: w.id, workout_date: csvDate(w.date), workout_name: w.name, exercise: ex ? ex.name : '', variant: v ? v.name : '', exercise_note: e.note };
+      const push = (row) => lines.push(CSV_COLS.map((c) => q({ ...base, ...row }[c])).join(','));
+      const sets = e.sets.filter((st) => !isBlank(st));
+      if (!sets.length) { if (e.note) push({}); continue; }
+      sets.forEach((st, i) => {
+        push({ set_number: i + 1, segment_number: 0, segment_kind: 'base', weight: st.weight, reps: st.reps, set_types: st.types.join('|'),
+          myo_target: st.types.includes('Myo-rep Match') ? st.myo.target : null, rom: st.rom, rpe: st.rpe });
+        if (st.types.includes('Drop Set')) st.drops.forEach((d, j) => push({ set_number: i + 1, segment_number: j + 1, segment_kind: 'drop', weight: d.weight, reps: d.reps, set_types: st.types.join('|') }));
+        if (st.types.includes('Myo-rep Match')) st.myo.minis.forEach((m, j) => push({ set_number: i + 1, segment_number: j + 1, segment_kind: 'myo', weight: st.weight, reps: m, set_types: st.types.join('|') }));
+      });
+    }
+  }
+  return lines.join('\r\n') + '\r\n';
+}
+
+async function exportCSV() {
+  const msg = document.getElementById('export-msg');
+  const name = `lift-log-${localDateValue(new Date().toISOString())}.csv`;
+  const file = new File([toCSV()], name, { type: 'text/csv' });
+  let done = false;
+  try {
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      await navigator.share({ files: [file] });
+      done = true;
+    }
+  } catch (err) {
+    if (err && err.name === 'AbortError') { if (msg) msg.textContent = 'Export cancelled.'; return; }
+  }
+  if (!done) {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(file); a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+  }
+  META.lastBackup = new Date().toISOString();
+  await saveMeta();
+  renderSettings();
+  const m2 = document.getElementById('export-msg');
+  if (m2) m2.textContent = `Exported ${name}.`;
+}
+
 // ============================================================
 // Event wiring (one listener for the whole app)
 // ============================================================
@@ -659,6 +774,7 @@ app.addEventListener('click', (e) => {
   const act = a.dataset.act;
   if (act === 'start-workout') return startWorkout();
   if (act === 'lib-add') return libraryAdd();
+  if (act === 'export') return exportCSV();
   if (location.hash.startsWith('#/exercise/')) return onExerciseAction(act, a);
   if (location.hash.startsWith('#/workout/')) return onWorkoutAction(act, a);
 });
@@ -669,7 +785,11 @@ function onAnyInput(e) {
   if (location.hash.startsWith('#/exercise/')) return onExerciseInput(el);
 }
 app.addEventListener('input', onAnyInput);
-app.addEventListener('change', (e) => { if (e.target.tagName === 'SELECT' || e.target.type === 'date') onAnyInput(e); });
+app.addEventListener('change', async (e) => {
+  const k = e.target.dataset.setting;
+  if (k) { SETTINGS[k] = e.target.checked; await saveSettings(); return; }
+  if (e.target.tagName === 'SELECT' || e.target.type === 'date') onAnyInput(e);
+});
 
 app.addEventListener('keydown', (e) => {
   if (e.key !== 'Enter') return;
@@ -689,7 +809,9 @@ document.addEventListener('keydown', (e) => {
 // Start up
 // ============================================================
 async function boot() {
-  const [exs, wos] = await Promise.all([db.getAll('exercises'), db.getAll('workouts')]);
+  const [exs, wos, st, mt] = await Promise.all([db.getAll('exercises'), db.getAll('workouts'), db.get('meta', 'settings'), db.get('meta', 'meta')]);
+  if (st) SETTINGS = { ...DEFAULT_SETTINGS, ...st.value };
+  if (mt) META = { ...META, ...mt.value };
   exs.forEach((x) => S.ex.set(x.id, x));
   wos.forEach((x) => S.wo.set(x.id, x));
   route();
@@ -700,4 +822,4 @@ async function boot() {
 boot().catch((err) => { app.innerHTML = `<div class="empty">Something went wrong loading your data: ${esc(err.message)}</div>`; });
 
 // for automated testing
-window.__liftlog = { S };
+window.__liftlog = { S, get SETTINGS() { return SETTINGS; }, toCSV };
