@@ -6,7 +6,7 @@ import * as db from './db.js';
 // ============================================================
 const S = { ex: new Map(), wo: new Map() };
 const app = document.getElementById('app');
-const APP_VERSION = 'v0.5.0';
+const APP_VERSION = 'v0.5.1';
 const SET_TYPES = ['Warmup', 'Drop Set', 'Superset', 'Myo-rep Match'];
 
 // Which optional fields are shown. Saved on the phone; turning one off only hides it.
@@ -47,6 +47,8 @@ const parseWeight = (v) => { const n = parseFloat(String(v).replace(',', '.')); 
 const parseInt10 = (v) => { const n = parseInt(v, 10); return isFinite(n) ? n : null; };
 const shortDate = (iso) => new Date(iso).toLocaleDateString([], { month: 'short', day: 'numeric' });
 const longDate = (iso) => new Date(iso).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+const localTimeValue = (iso) => { const d = new Date(iso); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
+const timeOf = (iso) => new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 const localDateValue = (iso) => { const d = new Date(iso); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 const byName = (a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
 const activeVariants = (ex) => (ex ? ex.variants.filter((v) => !v.archived) : []);
@@ -152,10 +154,10 @@ function renderWorkouts() {
   const item = (w) => {
     const names = w.entries.map((e) => exLabel(e).name);
     return `<button class="list-item" data-nav="#/workout/${w.id}"><div class="grow"><div class="title">${esc(w.name || 'Workout')}</div>
-      <div class="sub">${esc(longDate(w.date))}${names.length ? ' · ' + esc(names.join(', ')) : ''}</div></div><span class="chev">›</span></button>`;
+      <div class="sub">${esc(longDate(w.date))} · ${esc(timeOf(w.date))}${names.length ? ' · ' + esc(names.join(', ')) : ''}</div></div><span class="chev">›</span></button>`;
   };
   app.innerHTML = topbar('Workouts', '#/', 'Home') + `<main>
-    ${cur ? `<button class="banner" style="margin:0 0 12px;width:100%" data-nav="#/workout/${cur.id}">Continue workout<small>${esc(cur.name || 'Workout')} · started ${esc(longDate(cur.date))}</small></button>`
+    ${cur ? `<button class="banner" style="margin:0 0 12px;width:100%" data-nav="#/workout/${cur.id}">Continue workout<small>${esc(cur.name || 'Workout')} · started ${esc(longDate(cur.date))} at ${esc(timeOf(cur.date))}</small></button>`
           : `<button class="primary block" data-act="start-workout" style="padding:14px;margin-bottom:12px">Start workout</button>`}
     <div class="section-label">History</div>
     ${past.length ? past.map(item).join('') : '<div class="empty">No finished workouts yet.</div>'}
@@ -179,11 +181,11 @@ function renderWorkout(id, focusSel) {
   curWorkoutId = id;
   const w = S.wo.get(id);
   const scroll = window.scrollY;
-  const right = w.endedAt ? '' : `<button class="primary" data-act="finish">Finish</button>`;
-  app.innerHTML = topbar(w.endedAt ? 'Workout' : 'In progress', '#/workouts', 'Workouts', right) + `<main>
+  app.innerHTML = topbar(w.endedAt ? 'Workout' : 'In progress', '#/workouts', 'Workouts') + `<main>
     <div class="wo-head">
-      <input data-wfield="name" value="${esc(w.name)}" placeholder="Workout name (optional)" autocomplete="off">
-      <input data-wfield="date" type="date" value="${localDateValue(w.date)}">
+      <input class="wo-name" data-wfield="name" value="${esc(w.name)}" placeholder="Workout name (optional)" autocomplete="off">
+      <label class="wo-when">Date<input data-wfield="date" type="date" value="${localDateValue(w.date)}"></label>
+      <label class="wo-when">Start time<input data-wfield="time" type="time" value="${localTimeValue(w.date)}"></label>
     </div>
     ${w.entries.map((e, i) => entryCard(w, e, i)).join('')}
     <button class="block" data-act="add-exercise" style="padding:14px">+ Add exercise</button>
@@ -349,6 +351,13 @@ function onWorkoutInput(el) {
     const old = new Date(c.w.date);
     c.w.date = new Date(y, m - 1, d, old.getHours(), old.getMinutes()).toISOString();
   }
+  else if (el.dataset.wfield === 'time') {
+    if (!v) return;
+    const [hh, mm] = v.split(':').map(Number);
+    const d = new Date(c.w.date);
+    d.setHours(hh, mm, 0, 0);
+    c.w.date = d.toISOString();
+  }
   else if (f === 'note') { c.entry.note = v; }
   else if (c.set) {
     const s = c.set;
@@ -496,21 +505,12 @@ function drawPickList(sheet) {
   const ql = q.toLowerCase();
   const all = [...S.ex.values()].filter((x) => !x.archived);
   const match = all.filter((x) => !ql || x.name.toLowerCase().includes(ql));
-  const btn = (x) => {
-    const vs = SETTINGS.variant ? activeVariants(x) : [];
-    return `<button data-pick="${x.id}"><b>${esc(x.name)}</b>${vs.length ? `<br><span class="muted small">${esc(vs.map((v) => v.name).join(' · '))}</span>` : ''}</button>`;
-  };
+  const btn = (x) => `<button data-pick="${x.id}">${esc(x.name)}</button>`;
   let html = '';
   const exact = all.find((x) => x.name.toLowerCase() === ql);
   if (q && !exact) html += `<button class="primary" data-create="1">+ Add “${esc(q)}” to library</button>`;
-  if (!ql) {
-    const recent = all.filter((x) => x.lastUsed).sort((a, b) => b.lastUsed.localeCompare(a.lastUsed)).slice(0, 5);
-    if (recent.length) html += `<div class="group">Recent</div>` + recent.map(btn).join('');
-    if (all.length) html += `<div class="group">All exercises</div>` + [...all].sort(byName).map(btn).join('');
-    if (!all.length) html += `<div class="faint small" style="padding:8px 2px">Your library is empty. Type a name above to add your first exercise.</div>`;
-  } else {
-    html += match.sort(byName).map(btn).join('');
-  }
+  if (!all.length) html += `<div class="faint small" style="padding:8px 2px">Your library is empty. Type a name above to add your first exercise.</div>`;
+  else html += match.sort(byName).map(btn).join('');
   sheet.querySelector('#pick-list').innerHTML = html;
 }
 
@@ -750,7 +750,8 @@ function renderProgress() {
   const prs = repPRs(META.progressKey);
   app.innerHTML = topbar('Progress', '#/', 'Home') + `<main>
     <select id="prog-ex" class="prog-select" aria-label="Exercise">${sorted.map((c) => `<option value="${esc(c.key)}"${c.key === META.progressKey ? ' selected' : ''}>${esc(c.label)}</option>`).join('')}</select>
-    <div class="seg" role="group" aria-label="Which set represents each workout">
+    <div class="seg-label">Chart workout progress by:</div>
+    <div class="seg" role="group" aria-label="Chart workout progress by">
       <button data-act="mode" data-mode="heaviest" class="${mode === 'heaviest' ? 'on' : ''}">Heaviest set</button>
       <button data-act="mode" data-mode="e1rm" class="${mode === 'e1rm' ? 'on' : ''}">Best est. max</button>
     </div>
@@ -928,7 +929,7 @@ app.addEventListener('change', async (e) => {
   if (e.target.id === 'prog-ex') { META.progressKey = e.target.value; await saveMeta(); renderProgress(); return; }
   const k = e.target.dataset.setting;
   if (k) { SETTINGS[k] = e.target.checked; await saveSettings(); return; }
-  if (e.target.tagName === 'SELECT' || e.target.type === 'date') onAnyInput(e);
+  if (e.target.tagName === 'SELECT' || e.target.type === 'date' || e.target.type === 'time') onAnyInput(e);
 });
 
 app.addEventListener('keydown', (e) => {
