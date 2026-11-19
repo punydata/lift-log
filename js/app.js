@@ -6,7 +6,7 @@ import * as db from './db.js';
 // ============================================================
 const S = { ex: new Map(), wo: new Map() };
 const app = document.getElementById('app');
-const APP_VERSION = 'v0.5.1';
+const APP_VERSION = 'v0.5.2';
 const SET_TYPES = ['Warmup', 'Drop Set', 'Superset', 'Myo-rep Match'];
 
 // Which optional fields are shown. Saved on the phone; turning one off only hides it.
@@ -134,10 +134,10 @@ function renderHome() {
     ${needsBackup() ? `<button class="backup-nudge" data-nav="#/settings">${esc(backupText())} · <u>Back up now</u></button>` : ''}
     ${cur ? `<button class="banner" data-nav="#/workout/${cur.id}">Continue workout<small>${esc(cur.name || 'Workout')} · ${cur.entries.length} exercise${cur.entries.length === 1 ? '' : 's'}</small></button>` : ''}
     <nav class="home-grid">
-      <button class="tile" data-nav="#/progress"><span class="glyph">↗</span>Progress<small>Charts &amp; PRs</small></button>
-      <button class="tile" data-nav="#/workouts"><span class="glyph">●</span>Workouts<small>${S.wo.size} logged</small></button>
-      <button class="tile" data-nav="#/library"><span class="glyph">≡</span>Exercise Library<small>${[...S.ex.values()].filter((e) => !e.archived).length} exercises</small></button>
-      <button class="tile" data-nav="#/settings"><span class="glyph">⚙</span>Settings<small>Fields &amp; backup</small></button>
+      <button class="tile" data-nav="#/progress"><span class="glyph" aria-hidden="true">📈</span>Progress<small>Charts &amp; PRs</small></button>
+      <button class="tile" data-nav="#/workouts"><span class="glyph" aria-hidden="true">🏋️</span>Workouts<small>${S.wo.size} logged</small></button>
+      <button class="tile" data-nav="#/library"><span class="glyph" aria-hidden="true">📚</span>Exercise Library<small>${[...S.ex.values()].filter((e) => !e.archived).length} exercises</small></button>
+      <button class="tile" data-nav="#/settings"><span class="glyph" aria-hidden="true">⚙️</span>Settings<small>Fields &amp; backup</small></button>
     </nav>`;
 }
 
