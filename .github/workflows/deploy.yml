@@ -1,10 +1,15 @@
 # Publishes the app to GitHub Pages:
 #   main -> https://punydata.github.io/lift-log/      (live)
 #   dev  -> https://punydata.github.io/lift-log/dev/  (dev, for testing on the phone first)
+# Runs on a push to main, after "Dev pushed" finishes (a push to dev), or by hand
+# (Actions tab -> Deploy to Pages -> Run workflow). It always runs from main.
 name: Deploy to Pages
 on:
   push:
-    branches: [main, dev]
+    branches: [main]
+  workflow_run:
+    workflows: [Dev pushed]
+    types: [completed]
   workflow_dispatch:
 permissions:
   contents: read
