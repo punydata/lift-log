@@ -6,7 +6,7 @@ import * as db from './db.js';
 // ============================================================
 const S = { ex: new Map(), wo: new Map() };
 const app = document.getElementById('app');
-const APP_VERSION = 'v0.5.3';
+const APP_VERSION = 'v0.5.4';
 const SET_TYPES = ['Warmup', 'Drop Set', 'Superset', 'Myo-rep Match'];
 
 // Which optional fields are shown. Saved on the phone; turning one off only hides it.

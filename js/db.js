@@ -1,5 +1,5 @@
 // On-device storage (IndexedDB). Nothing here ever leaves the phone.
-const DB_NAME = 'liftlog';
+const DB_NAME = (self.LIFTLOG_ENV && self.LIFTLOG_ENV.DB_NAME) || 'liftlog';
 const DB_VERSION = 1;
 let dbPromise;
 
