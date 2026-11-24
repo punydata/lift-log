@@ -2,16 +2,20 @@
 // Bump VERSION whenever app files change so phones pick up the update.
 importScripts('./js/env.js');
 const ENV = self.LIFTLOG_ENV;
-const VERSION = 'v0.5.4';
+const VERSION = 'v0.6.0-dev.1';
 const CACHE = ENV.CACHE_PREFIX + VERSION;
 const FILES = [
   './',
   './index.html',
   './manifest.json',
+  './css/themes.css',
   './css/app.css',
   './js/env.js',
   './js/app.js',
   './js/db.js',
+  './js/model.js',
+  './js/zip.js',
+  './js/backup.js',
   './icons/icon-180.png',
   './icons/icon-192.png',
   './icons/icon-512.png'
