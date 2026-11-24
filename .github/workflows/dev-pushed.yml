@@ -1,14 +1,16 @@
-# A push to dev only records that dev changed. The deploy workflow then runs
-# from main (GitHub Pages only accepts deploys started from main by default),
-# and publishes both copies.
+# A push to dev starts "Deploy to Pages" on main (GitHub Pages only accepts
+# deploys started from main by default). That run publishes both copies.
 name: Dev pushed
 on:
   push:
     branches: [dev]
 permissions:
+  actions: write
   contents: read
 jobs:
-  note:
+  trigger-deploy:
     runs-on: ubuntu-latest
     steps:
-      - run: echo "dev updated at ${{ github.sha }}; Deploy to Pages will publish it to /dev/"
+      - run: gh workflow run deploy.yml --ref main -R "$GITHUB_REPOSITORY"
+        env:
+          GH_TOKEN: ${{ github.token }}
